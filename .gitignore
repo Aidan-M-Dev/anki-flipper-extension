@@ -1,0 +1,18 @@
+# Build artifacts
+build/
+dist/
+*.elf
+*.fap
+*.d
+*.o
+
+# ufbt SDK cache
+.ufbt/
+
+# IDE
+.vscode/
+.idea/
+
+# OS junk
+.DS_Store
+Thumbs.db

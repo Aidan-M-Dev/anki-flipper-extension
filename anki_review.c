@@ -1,9 +1,11 @@
 #include <furi.h>
 #include <furi_hal_bt.h>
-#include <furi_hal_bt_hid.h>
+#include <hid_usage_keyboard.h>
 #include <bt/bt_service/bt.h>
 #include <gui/gui.h>
 #include <storage/storage.h>
+
+#include "ble_hid_profile.h"
 
 #define BT_KEYS_PATH APP_DATA_PATH(".bt_hid.keys")
 
@@ -14,15 +16,16 @@ typedef struct {
     ViewPort* view_port;
     FuriMessageQueue* event_queue;
     Bt* bt;
+    FuriHalBleProfileBase* ble_profile;
 } AnkiReviewApp;
 
 /* Pure mapping function — unit-testable off-device (T6).
  * Returns 0 if the key should not produce HID output. */
 uint16_t anki_map_key(InputKey key) {
     switch(key) {
-    case InputKeyUp:
-        return HID_KEYBOARD_SPACEBAR;
     case InputKeyOk:
+        return HID_KEYBOARD_SPACEBAR;
+    case InputKeyUp:
         return HID_KEYBOARD_2;
     case InputKeyDown:
         return HID_KEYBOARD_1;
@@ -52,9 +55,9 @@ static void draw_callback(Canvas* canvas, void* ctx) {
     } else {
         canvas_set_font(canvas, FontSecondary);
         canvas_draw_str_aligned(canvas, 64, 14, AlignCenter, AlignTop, "\x95 Connected");
-        canvas_draw_str_aligned(canvas, 64, 28, AlignCenter, AlignTop, "[^] Flip card  (Space)");
-        canvas_draw_str_aligned(canvas, 64, 38, AlignCenter, AlignTop, "[OK] Yes        (2)");
-        canvas_draw_str_aligned(canvas, 64, 48, AlignCenter, AlignTop, "[v] No          (1)");
+        canvas_draw_str_aligned(canvas, 64, 28, AlignCenter, AlignTop, "OK: Flip card");
+        canvas_draw_str_aligned(canvas, 64, 38, AlignCenter, AlignTop, "Up: Yes");
+        canvas_draw_str_aligned(canvas, 64, 48, AlignCenter, AlignTop, "Down: No");
     }
 
     canvas_set_font(canvas, FontSecondary);
@@ -81,12 +84,13 @@ int32_t anki_review_app(void* p) {
     app.gui = furi_record_open(RECORD_GUI);
     gui_add_view_port(app.gui, app.view_port, GuiLayerFullscreen);
 
-    /* BLE HID setup */
+    /* BLE HID setup — uses local profile (raw GATT) for Unleashed compat */
     app.bt = furi_record_open(RECORD_BT);
     bt_disconnect(app.bt);
     furi_delay_ms(200);
     bt_keys_storage_set_storage_path(app.bt, BT_KEYS_PATH);
-    furi_check(furi_hal_bt_change_app(FuriHalBtProfileHidKeyboard, NULL, NULL));
+    app.ble_profile = bt_profile_start(app.bt, ble_profile_hid_local, NULL);
+    furi_check(app.ble_profile);
     furi_hal_bt_start_advertising();
     bt_set_status_changed_callback(app.bt, bt_status_changed, &app);
 
@@ -100,9 +104,9 @@ int32_t anki_review_app(void* p) {
                 uint16_t hid_key = anki_map_key(event.key);
                 if(hid_key) {
                     if(event.type == InputTypePress) {
-                        furi_hal_bt_hid_kb_press(hid_key);
+                        ble_hid_kb_press(app.ble_profile, hid_key);
                     } else if(event.type == InputTypeRelease) {
-                        furi_hal_bt_hid_kb_release(hid_key);
+                        ble_hid_kb_release(app.ble_profile, hid_key);
                     }
                 }
             }
@@ -114,7 +118,7 @@ int32_t anki_review_app(void* p) {
     bt_disconnect(app.bt);
     furi_delay_ms(200);
     bt_keys_storage_set_default_path(app.bt);
-    furi_check(furi_hal_bt_change_app(FuriHalBtProfileSerial, NULL, NULL));
+    furi_check(bt_profile_restore_default(app.bt));
     furi_record_close(RECORD_BT);
 
     /* Teardown GUI */
